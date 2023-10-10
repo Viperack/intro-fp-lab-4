@@ -6,14 +6,15 @@ License     : BSD
 Maintainer  : alexg@chalmers.se
 Stability   : experimental
 
-Authors     : <list your names here>
-Lab group   : <group number>
+Authors     : Theodor Köhler, Daniel Rising, Ludvig Ingolfson
+Lab group   : 31
 -}
 
 module Simplify where
 
 import Poly
 import Test.QuickCheck
+
 
 -- Use the following simple data type for binary operators
 data BinOp = AddOp | MulOp deriving Eq
@@ -27,14 +28,15 @@ data BinOp = AddOp | MulOp deriving Eq
 -- x, your data type should *not* use 'String' or 'Char' anywhere, since this is
 -- not needed.
 
-data Expr = Expr -- change this!
+data Expr = Num Int | Op BinOp Expr Expr | Expo Int
 
 --------------------------------------------------------------------------------
 -- * A2
 -- Define the data type invariant that checks that exponents are never negative
 prop_Expr :: Expr -> Bool
-prop_Expr = undefined
-
+prop_Expr (Num _)       = True
+prop_Expr (Op _ e1 e2)  = prop_Expr e1 && prop_Expr e2
+prop_Expr (Expo n)      = n >= 0
 
 --------------------------------------------------------------------------------
 -- * A3
@@ -42,8 +44,18 @@ prop_Expr = undefined
 -- lecture). You can use Haskell notation for powers: x^2. You should show x^1 
 -- as just x. 
 
--- instance Show Expr where
---   show = undefined
+instance Show Expr where
+-- Num
+  show (Num n)          = show n
+-- Expo
+  show (Expo 1)         = "x"
+  show (Expo n)         = "x^" ++ show n
+-- Op
+  show (Op AddOp e1 e2) = show e1 ++ " + " ++ show e2
+  show (Op MulOp e1 e2) = showFactor e1 ++ " * " ++ showFactor e2
+    where
+      showFactor e@(Op AddOp e1 e2) = "(" ++ show e ++ ")"
+      showFactor e                  = show e
 
 --------------------------------------------------------------------------------
 -- * A4
@@ -57,7 +69,33 @@ prop_Expr = undefined
 -- could use to find a smaller counterexample for failing tests.
 
 instance Arbitrary Expr
-  where arbitrary = undefined
+  where arbitrary = sized genExpr
+
+genExpr :: Int -> Gen Expr
+genExpr n
+ | n < 2 = genRoot
+ | otherwise = do
+   m <- choose (1, n-1)
+   op <- elements [AddOp, MulOp]
+   x <- genExpr m
+   y <- genExpr (n-m)
+   return (Op op x y)
+ where
+  genRoot :: Gen Expr -- Generates a root expression, ex. "x^2"
+  genRoot = do
+   b <- arbitrary
+   if b
+    then genNum
+    else genExpo
+    where
+      genNum :: Gen Expr -- Generates number, ex. "-3"
+      genNum = do
+        n <- choose (0, 15)
+        return (Num n)
+      genExpo :: Gen Expr -- Generates an exponentiation, ex. "x^5"
+      genExpo = do
+        n <- choose (0, 5)
+        return (Expo (abs n))
 
 --------------------------------------------------------------------------------
 -- * A5
@@ -65,7 +103,11 @@ instance Arbitrary Expr
 -- evaluates it.
 
 eval :: Int -> Expr -> Int
-eval = undefined
+eval x (Num n)          = n
+eval x (Expo n)         = x^n
+eval x (Op AddOp e1 e2) = eval x e1 + eval x e2
+eval x (Op MulOp e1 e2) = eval x e1 * eval x e2
+
 
 --------------------------------------------------------------------------------
 -- * A6
@@ -74,25 +116,50 @@ eval = undefined
 -- by solving the smaller problems and combining them in the right way. 
 
 exprToPoly :: Expr -> Poly
-exprToPoly = undefined
+exprToPoly (Num n)          = fromList [n]
+exprToPoly (Expo n)         = fromList $ 1 : replicate n 0
+exprToPoly (Op AddOp e1 e2) = exprToPoly e1 + exprToPoly e2
+exprToPoly (Op MulOp e1 e2) = exprToPoly e1 * exprToPoly e2
+
 
 -- Define (and check) @prop_exprToPoly@, which checks that evaluating the
 -- polynomial you get from @exprToPoly@ gives the same answer as evaluating
 -- the expression.
 
-prop_exprToPoly = undefined
+prop_exprToPoly :: Expr -> Int -> Bool
+prop_exprToPoly expr n = eval n expr == evalPoly n (exprToPoly expr)
 
 --------------------------------------------------------------------------------
 -- * A7
 -- Now define the function going in the other direction.
 
 polyToExpr :: Poly -> Expr
-polyToExpr = undefined
+polyToExpr poly = listToExpr $ toList poly
+  where
+    listToExpr []     = Num 0
+    listToExpr [n]    = Num n
+    listToExpr (x:xs)
+     = addExpr (mulExpr (Num x) (Expo (length xs))) $ listToExpr xs
+
+-- Smart addition, removes identity
+addExpr :: Expr -> Expr -> Expr
+addExpr (Num 0) y = y
+addExpr y (Num 0) = y
+addExpr x y       = Op AddOp x y
+
+-- Smart multiplication, removes identity
+mulExpr :: Expr -> Expr -> Expr
+mulExpr (Num 1) y = y
+mulExpr x (Num 1) = x
+mulExpr (Num 0) y = Num 0
+mulExpr x (Num 0) = Num 0
+mulExpr x y = Op MulOp x y
 
 -- Write (and check) a quickCheck property for this function similar to
 -- question 6. 
 
-prop_polyToExpr = undefined
+prop_polyToExpr :: Poly -> Int -> Bool
+prop_polyToExpr poly n = evalPoly n poly == eval n (polyToExpr poly)
 
 --------------------------------------------------------------------------------
 -- * A8
@@ -100,7 +167,7 @@ prop_polyToExpr = undefined
 -- to a polynomial and back again.
 
 simplify :: Expr -> Expr
-simplify = undefined
+simplify = polyToExpr . exprToPoly
 
 --------------------------------------------------------------------------------
 -- * A9
@@ -108,9 +175,22 @@ simplify = undefined
 -- contain any "junk", where junk is defined to be multiplication by one or 
 -- zero, addition of zero, addition or multiplication of numbers, or x to the
 -- power of zero. (You may need to fix A7)
-
 prop_noJunk :: Expr -> Bool
-prop_noJunk = undefined
+prop_noJunk e = prop_noJunk' (simplify e)
+  where
+    prop_noJunk' :: Expr -> Bool
+    prop_noJunk' (Expo 0)                    = False -- No x to the power of 0
+    prop_noJunk' (Op AddOp (Num 0) e2)       = False -- No addition with 0
+    prop_noJunk' (Op AddOp e2 (Num 0))       = False -- No addition with 0
+    prop_noJunk' (Op MulOp (Num 0) e2)       = False -- No multiplication by 0
+    prop_noJunk' (Op MulOp e2 (Num 0))       = False -- No multiplication by 0
+    prop_noJunk' (Op MulOp (Num 1) e2)       = False -- No multiplication by 1
+    prop_noJunk' (Op MulOp e2 (Num 1))       = False -- No multiplication by 1
+    prop_noJunk' (Op AddOp (Num x) (Num y))  = False -- No addition of numbers
+    prop_noJunk' (Op MulOp (Num x) (Num y))  = False -- No multiplication of numbers
+    prop_noJunk' (Op _ e1 e2)                = prop_noJunk e1 && prop_noJunk e2
+    prop_noJunk' _                           = True
+
 
 --------------------------------------------------------------------------------
 -- * A10
@@ -124,10 +204,15 @@ diffFile :: FilePath
 diffFile = "difficulty.txt"
 
 readDifficulty :: IO Difficulty
-readDifficulty = undefined
+readDifficulty = do
+  txt <- readFile diffFile
+  return (read txt)
 
 writeDifficulty :: Difficulty -> IO ()
-writeDifficulty = undefined
+writeDifficulty difficulty = do
+  if difficulty < 0
+    then error "Simplify: Negative difficulty!"
+    else writeFile diffFile $ show difficulty
 
 --------------------------------------------------------------------------------
 -- * A11
@@ -137,7 +222,25 @@ writeDifficulty = undefined
 -- difficulty by one. If the guess was wrong, again give feedback and decrease 
 -- the difficulty by one. Then play again.
 
+
+
 play :: IO ()
-play = undefined
+play = do
+  difficulty <- readDifficulty
+  x <- generate (choose (1, 4)) -- generate arbitrary
+  expr  <- generate (genExpr difficulty)
+  -- let answer = eval x expr
+  putStr ("Simplify the following expression with x = " ++ show x ++
+    "\n\n" ++ show expr ++
+    "\n\n> ")
+  guess <- readLn
+  if guess == eval x expr
+    then do
+      putStrLn "Well Done!\n"
+      writeDifficulty (difficulty + 1)
+    else do
+      putStrLn ("No, it should have been " ++ show (eval x expr) ++ ".")
+      writeDifficulty (difficulty - 1)
+
 
 --------------------------------------------------------------------------------
