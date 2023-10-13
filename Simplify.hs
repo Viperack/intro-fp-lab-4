@@ -71,31 +71,28 @@ instance Show Expr where
 instance Arbitrary Expr
   where arbitrary = sized genExpr
 
+maxExpo, maxNum :: Int
+maxExpo = 4
+maxNum = 10
+
 genExpr :: Int -> Gen Expr
 genExpr n
- | n < 2 = genRoot
+ | n < 2 = frequency [(1, genExpo), (1, genNum)]
  | otherwise = do
    m <- choose (1, n-1)
    op <- elements [AddOp, MulOp]
    x <- genExpr m
    y <- genExpr (n-m)
    return (Op op x y)
- where
-  genRoot :: Gen Expr -- Generates a root expression, ex. "x^2"
-  genRoot = do
-   b <- arbitrary
-   if b
-    then genNum
-    else genExpo
-    where
-      genNum :: Gen Expr -- Generates number, ex. "-3"
-      genNum = do
-        n <- choose (0, 15)
-        return (Num n)
-      genExpo :: Gen Expr -- Generates an exponentiation, ex. "x^5"
-      genExpo = do
-        n <- choose (0, 5)
-        return (Expo (abs n))
+  where
+    genNum :: Gen Expr -- Generates number, ex. "-3"
+    genNum = do
+      n <- choose (0, maxNum)
+      return (Num n)
+    genExpo :: Gen Expr -- Generates an exponentiation, ex. "x^2"
+    genExpo = do
+      n <- choose (0, maxExpo)
+      return (Expo (abs n))
 
 --------------------------------------------------------------------------------
 -- * A5
@@ -211,7 +208,8 @@ readDifficulty = do
 writeDifficulty :: Difficulty -> IO ()
 writeDifficulty difficulty = do
   if difficulty < 0
-    then error "Simplify: Negative difficulty!"
+    then error "Simplify: Negative difficulty!" -- Should print error message
+                                                -- and not change the file
     else writeFile diffFile $ show difficulty
 
 --------------------------------------------------------------------------------
@@ -231,16 +229,18 @@ play = do
   expr  <- generate (genExpr difficulty)
   -- let answer = eval x expr
   putStr ("Simplify the following expression with x = " ++ show x ++
-    "\n\n" ++ show expr ++
+    "\n\n" ++ show (simplify expr) ++
     "\n\n> ")
   guess <- readLn
   if guess == eval x expr
     then do
       putStrLn "Well Done!\n"
       writeDifficulty (difficulty + 1)
+      play
     else do
       putStrLn ("No, it should have been " ++ show (eval x expr) ++ ".")
       writeDifficulty (difficulty - 1)
+      play
 
 
 --------------------------------------------------------------------------------
